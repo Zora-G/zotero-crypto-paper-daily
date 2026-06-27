@@ -1,0 +1,34 @@
+name: Send emails daily
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * *'
+
+jobs:
+  calculate-and-send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Run script
+        env:
+          ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
+          ZOTERO_KEY: ${{ secrets.ZOTERO_KEY }}
+          SENDER: ${{ secrets.SENDER }}
+          RECEIVER: ${{ secrets.RECEIVER }}
+          SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
+        run: |
+          if [ -n "$CUSTOM_CONFIG" ]; then
+            printf "%b\n" "$CUSTOM_CONFIG" > config/custom.yaml
+            echo "Using CUSTOM_CONFIG repository variable."
+          else
+            echo "Using committed config/custom.yaml."
+          fi
+          uv run src/zotero_arxiv_daily/main.py

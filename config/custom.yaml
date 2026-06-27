@@ -1,0 +1,101 @@
+zotero:
+  user_id: ${oc.env:ZOTERO_ID}
+  api_key: ${oc.env:ZOTERO_KEY}
+  include_path: null
+  ignore_path: null
+
+email:
+  sender: ${oc.env:SENDER}
+  receiver: ${oc.env:RECEIVER}
+  smtp_server: smtp.163.com
+  smtp_port: 465
+  sender_password: ${oc.env:SENDER_PASSWORD}
+
+llm:
+  api:
+    key: ${oc.env:OPENAI_API_KEY}
+    base_url: ${oc.env:OPENAI_API_BASE}
+  generation_kwargs:
+    model: Qwen/Qwen3-8B
+    extra_body:
+      enable_thinking: false
+  language: Chinese
+  tldr:
+    max_sentences: 3
+    max_words: 160
+
+source:
+  arxiv:
+    category: ["cs.CR"]
+    include_cross_list: true
+    days_back: 10
+  eprint:
+    category: [
+      "cryptography",
+      "cryptographic protocols",
+      "public-key cryptography",
+      "secret-key cryptography",
+      "privacy",
+      "security and privacy",
+      "privacy-preserving",
+      "privacy-preserving cryptography",
+      "private information retrieval",
+      "password-based cryptography",
+      "password",
+      "password-based",
+      "password based",
+      "password-authenticated",
+      "password authenticated",
+      "password-authenticated key exchange",
+      "PAKE",
+      "zero-knowledge",
+      "oblivious transfer",
+      "private set intersection",
+      "applications",
+      "implementation",
+      "applied cryptography",
+      "post-quantum cryptography",
+      "foundations"
+    ]
+    days_back: 10
+
+executor:
+  debug: ${oc.env:DEBUG,null}
+  source: ['arxiv','eprint']
+  send_empty: true
+  max_paper_num: 30
+  source_min_papers:
+    arxiv: 10
+    eprint: 10
+  quality_boost: true
+  citation_weight: 0.15
+  author_weight: 0.15
+  venue_weight: 0.05
+  citation_scale: 200
+  author_h_index_scale: 25
+  quality_search_results: 5
+  quality_max_authors: 1
+  quality_timeout: 10
+  quality_min_title_similarity: 0.6
+  interest_profile_weight: 0.9
+  interest_profile:
+    - "Applied cryptography papers that introduce new real-world scenarios, deployment models, threat models, or security goals."
+    - "New cryptographic primitives, constructions, or protocol abstractions, including anonymous credentials, blind signatures, threshold cryptography, zero-knowledge proofs, MPC, functional encryption, attribute-based encryption, and post-quantum protocols."
+    - "Cryptographic protocols for emerging applications such as privacy-preserving AI, identity, wallets, authentication, encrypted databases, secure messaging, key management, blockchain systems, and federated services."
+    - "Papers that propose a new problem formulation, primitive, security definition, protocol model, or practical construction rather than mainly cryptanalysis, attacks, surveys, or incremental performance tuning."
+  reranker: api
+
+reranker:
+  api:
+    key: ${oc.env:OPENAI_API_KEY}
+    base_url: ${oc.env:OPENAI_API_BASE}
+    model: BAAI/bge-m3
+    batch_size: 32
+
+feedback:
+  enabled: false
+  endpoint: null
+  history_path: null
+  history_max_items: 200
+  positive_weight: 0.0
+  negative_weight: 0.0

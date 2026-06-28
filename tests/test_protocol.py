@@ -87,6 +87,64 @@ def test_tldr_formats_chinese_structured_review(llm_params):
     assert "<strong>为什么值得看：</strong>" in result
 
 
+def test_tldr_chinese_falls_back_when_llm_returns_english_json(llm_params):
+    client = make_stub_openai_client()
+    llm_params["language"] = "Chinese"
+    paper = make_sample_paper(title="English Title", title_cn="中文标题")
+    result = paper.generate_tldr(client, llm_params)
+    assert "<strong>问题：</strong>" in result
+    assert "Identify whether a paper is relevant" not in result
+    assert "English Title" not in result
+    assert "中文标题" in result
+
+
+def test_tldr_malformed_json_uses_clean_fallback(llm_params):
+    def create_malformed(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="```json\n{bad json\n```"),
+                )
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create_malformed)
+        )
+    )
+    llm_params["language"] = "Chinese"
+    paper = make_sample_paper(title="Fallback Title", title_cn="兜底标题")
+    result = paper.generate_tldr(client, llm_params)
+    assert "<strong>问题：</strong>" in result
+    assert "{bad json" not in result
+    assert "Fallback Title" not in result
+    assert "兜底标题" in result
+
+
+def test_tldr_escapes_html_from_llm(llm_params):
+    def create_html(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"problem":"<script>alert(1)</script>","method":"Use PAKE","cryptography_relevance":"Direct","ai_relevance":"None","why_worth_reading":"Useful","relevance_score":7,"tags":["x"]}'
+                    ),
+                )
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create_html)
+        )
+    )
+    paper = make_sample_paper()
+    result = paper.generate_tldr(client, llm_params)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
 def test_tldr_truncates_long_prompt(llm_params):
     client = make_stub_openai_client()
     paper = make_sample_paper(full_text="word " * 10000)

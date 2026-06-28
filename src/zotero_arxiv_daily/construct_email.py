@@ -1,5 +1,6 @@
 from .protocol import Paper
 import math
+import os
 from urllib.parse import urlencode
 
 
@@ -26,7 +27,7 @@ def _build_feedback_buttons(paper: Paper, feedback_cfg) -> str:
         return ""
     if not _cfg_get(feedback_cfg, "enabled", False):
         return ""
-    endpoint = _cfg_get(feedback_cfg, "endpoint", None)
+    endpoint = os.getenv("FEEDBACK_ENDPOINT") or _cfg_get(feedback_cfg, "endpoint", None)
     if not endpoint:
         return ""
 

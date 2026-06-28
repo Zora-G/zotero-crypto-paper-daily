@@ -65,6 +65,20 @@ def test_render_email_with_feedback_buttons():
     assert "paper_url=https%3A%2F%2Farxiv.org%2Fabs%2F2501.00001" in html
 
 
+def test_render_email_feedback_endpoint_env_override(monkeypatch):
+    monkeypatch.setenv("FEEDBACK_ENDPOINT", "https://override.example/feedback")
+    paper = make_sample_paper(score=7.2, tldr="Good", url="https://arxiv.org/abs/2501.00001")
+    html = render_email(
+        [paper],
+        feedback_cfg={
+            "enabled": True,
+            "endpoint": "https://example.com/feedback",
+        },
+    )
+    assert "https://override.example/feedback?action=liked" in html
+    assert "https://example.com/feedback" not in html
+
+
 def test_get_stars_low_score():
     assert get_stars(5.0) == ""
     assert get_stars(6.0) == ""

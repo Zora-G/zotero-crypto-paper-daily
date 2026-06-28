@@ -120,6 +120,8 @@ schedule:
 
 新增变量 `CUSTOM_CONFIG`，填入完整 YAML。workflow 检测到 `CUSTOM_CONFIG` 后会覆盖仓库里的 `config/custom.yaml`。
 
+如果只想临时替换反馈按钮地址，可以在 `Secrets` 里新增 `FEEDBACK_ENDPOINT`，它会覆盖 YAML 中的 `feedback.endpoint`，不需要重填完整配置。
+
 下面是一个可直接改的模板：
 
 ```yaml
@@ -237,6 +239,8 @@ feedback:
   positive_weight: 0.8
   negative_weight: 0.4
 ```
+
+也可以把地址单独放进 GitHub Actions secret `FEEDBACK_ENDPOINT`。当它存在时，邮件按钮会优先使用这个地址。
 
 邮件中的按钮会向 `endpoint` 发送 GET 请求，参数包括：
 

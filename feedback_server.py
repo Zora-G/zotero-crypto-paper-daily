@@ -11,6 +11,42 @@ from urllib.parse import parse_qs, urlparse
 
 
 FIELDNAMES = ["timestamp", "action", "source", "title", "paper_url"]
+SUCCESS_HTML = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Feedback recorded</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #1f2937;
+      background: #f8fafc;
+    }
+    main {
+      width: min(92vw, 560px);
+      padding: 32px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+    }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { margin: 0; line-height: 1.6; color: #4b5563; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>反馈已记录</h1>
+    <p>谢谢，这条反馈会用于后续论文排序。你可以关闭这个页面。</p>
+  </main>
+</body>
+</html>
+"""
 
 
 def _parse_timestamp(raw_timestamp: str) -> datetime | None:
@@ -65,14 +101,20 @@ def _append_feedback_row(path: Path, row: dict[str, str], retention_days: int | 
 
 def serve_feedback_server(host: str, port: int, output: Path, retention_days: int | None) -> None:
     class FeedbackHandler(BaseHTTPRequestHandler):
+        def _write_response(self, status: int, body: str, content_type: str) -> None:
+            encoded = body.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def do_GET(self):
             qs = parse_qs(urlparse(self.path).query)
             action = qs.get("action", [""])[0]
             title = qs.get("title", [""])[0]
             if action not in {"liked", "dislike"} or not title:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(b"Missing action/title")
+                self._write_response(400, "Missing action/title", "text/plain; charset=utf-8")
                 return
 
             row = {
@@ -83,8 +125,7 @@ def serve_feedback_server(host: str, port: int, output: Path, retention_days: in
                 "paper_url": qs.get("paper_url", [""])[0],
             }
             _append_feedback_row(output, row, retention_days=retention_days)
-            self.send_response(204)
-            self.end_headers()
+            self._write_response(200, SUCCESS_HTML, "text/html; charset=utf-8")
 
         def log_message(self, _format: str, *args) -> None:  # pragma: no cover
             pass

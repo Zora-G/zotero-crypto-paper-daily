@@ -21,8 +21,10 @@
 - 默认拉取最近 `10` 天论文，降低周末和 ePrint 发布节奏造成的漏报。
 - 邮件最多输出 `30` 篇，并默认保证 arXiv 至少 `10` 篇、ePrint 至少 `10` 篇。
 - 每篇论文显示 `Source`，arXiv/ePrint 有作者备注时会显示在来源后面。
-- 使用大模型生成中文标题翻译和更完整的中文 TLDR。
+- 使用大模型生成中文标题翻译和结构化 TLDR：问题、方法、密码相关性、AI 相关性、为什么值得看。
 - 增加显式兴趣画像，让排序更偏向应用密码学、新场景、新原语和隐私保护密码协议。
+- 增加 LLM 二次判别分数，用于对候选论文做轻量重排。
+- 增加近重复版本合并和同主题聚类，减少 arXiv/ePrint 重复版本或同一小主题挤占邮件名额。
 - 可选使用 OpenAlex 的论文引用量、作者影响力、发表质量信号做轻量加权。
 - 可选邮件反馈按钮，点击“推送满意/不太满意”后可用于后续排序偏好。
 
@@ -187,6 +189,15 @@ executor:
   citation_weight: 0.15
   author_weight: 0.15
   venue_weight: 0.05
+  llm_review_score_weight: 0.4
+  dedup:
+    enabled: true
+    title_similarity: 0.94
+    preferred_sources: ["eprint", "arxiv", "biorxiv", "medrxiv"]
+  topic_cluster:
+    enabled: true
+    topic_similarity: 0.74
+    max_per_cluster: 2
   interest_profile_weight: 0.9
   interest_profile:
     - "Applied cryptography papers that introduce new real-world scenarios, deployment models, threat models, or security goals."
@@ -219,6 +230,10 @@ feedback:
 - `source_min_papers`: 混排后每个来源至少保留多少篇。候选不足时不会强行补。
 - `interest_profile`: 直接告诉 reranker 你偏好的论文类型。
 - `quality_boost`: 是否用 OpenAlex 查引用量和作者质量信号。网络偶发失败时会跳过，不影响邮件发送。
+- `llm_review_score_weight`: LLM 二次判别分数对最终排序的影响。设为 `0` 可只生成结构化 TLDR，不改排序。
+- `dedup`: 合并近重复版本，常用于 arXiv/ePrint 同稿或标题微小差异的情况。
+- `topic_cluster`: 同主题聚类和多样化排序。`max_per_cluster: 2` 表示同一主题最多优先展示 2 篇，其余会后移。
+- 结构化 TLDR 会包含：`问题 / 方法 / 密码相关性 / AI相关性 / 为什么值得看`。
 
 ## 反馈按钮
 
@@ -291,6 +306,8 @@ export OPENAI_API_BASE=https://api.siliconflow.cn/v1
 - ePrint 太多或太少：调整 `source.eprint.category` 和 `interest_profile`。
 - TLDR 太短：调大 `llm.tldr.max_sentences` 和 `llm.tldr.max_words`。
 - arXiv/ePrint 比例不合适：调整 `executor.source_min_papers`。
+- 重复论文太多：调低 `executor.dedup.title_similarity`，例如 `0.90`。
+- 同一主题论文太集中：调低 `executor.topic_cluster.max_per_cluster`，例如 `1`。
 
 ## License
 

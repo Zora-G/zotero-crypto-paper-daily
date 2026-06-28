@@ -14,7 +14,15 @@ _AFFILIATION_MARKER = "You are an assistant who perfectly extracts affiliations"
 _AFFILIATION_RESPONSE = '["TsingHua University","Peking University"]'
 _TITLE_TRANSLATION_MARKER = "Translate the following academic paper title into Simplified Chinese"
 _TITLE_TRANSLATION_RESPONSE = "示例论文题目（中文）"
-_TLDR_RESPONSE = "Hello! How can I assist you today?"
+_TLDR_RESPONSE = """{
+  "problem": "Identify whether a paper is relevant to applied cryptography.",
+  "method": "Use a structured LLM review with field-specific judgments.",
+  "cryptography_relevance": "Directly related to cryptographic paper triage.",
+  "ai_relevance": "Uses an LLM for paper understanding.",
+  "why_worth_reading": "It improves the usefulness of the daily paper digest.",
+  "relevance_score": 8.5,
+  "tags": ["paper triage", "LLM review", "applied cryptography"]
+}"""
 
 
 def _make_chat_response(content: str) -> SimpleNamespace:

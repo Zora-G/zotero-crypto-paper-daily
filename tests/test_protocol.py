@@ -23,7 +23,11 @@ def test_tldr_returns_response(llm_params):
     client = make_stub_openai_client()
     paper = make_sample_paper()
     result = paper.generate_tldr(client, llm_params)
-    assert result == "Hello! How can I assist you today?"
+    assert "<strong>Problem：</strong>" in result
+    assert "<strong>Method：</strong>" in result
+    assert "<strong>Cryptography relevance：</strong>" in result
+    assert paper.llm_relevance_score == 8.5
+    assert "LLM review" in paper.llm_tags
     assert paper.tldr == result
 
 
@@ -66,9 +70,21 @@ def test_tldr_uses_configured_sentence_and_length(llm_params):
     paper = make_sample_paper()
     result = paper.generate_tldr(client, llm_params)
 
-    assert result == "Hello! How can I assist you today?"
-    assert "3-sentence TLDR" in captured_prompt["content"]
+    assert "<strong>Problem：</strong>" in result
+    assert "structured paper judgment" in captured_prompt["content"]
     assert "160" in captured_prompt["content"]
+
+
+def test_tldr_formats_chinese_structured_review(llm_params):
+    client = make_stub_openai_client()
+    llm_params["language"] = "Chinese"
+    paper = make_sample_paper()
+    result = paper.generate_tldr(client, llm_params)
+    assert "<strong>问题：</strong>" in result
+    assert "<strong>方法：</strong>" in result
+    assert "<strong>密码相关性：</strong>" in result
+    assert "<strong>AI相关性：</strong>" in result
+    assert "<strong>为什么值得看：</strong>" in result
 
 
 def test_tldr_truncates_long_prompt(llm_params):

@@ -1,9 +1,9 @@
 from loguru import logger
 from pyzotero import zotero
-from omegaconf import DictConfig, ListConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from .utils import glob_match
 from .retriever import get_retriever_cls
-from .protocol import CorpusPaper
+from .protocol import CorpusPaper, Paper
 import random
 from datetime import datetime
 from .reranker import get_reranker_cls
@@ -12,6 +12,15 @@ from .utils import send_email
 from .quality import OpenAlexQualityEnricher
 from openai import OpenAI
 from tqdm import tqdm
+from difflib import SequenceMatcher
+import re
+
+
+def _cfg_get(cfg, key: str, default=None):
+    try:
+        return cfg.get(key, default)
+    except Exception:
+        return getattr(cfg, key, default)
 
 
 def normalize_path_patterns(patterns: list[str] | ListConfig | None, config_key: str) -> list[str] | None:
@@ -159,6 +168,191 @@ class Executor:
 
         return selected[:max_paper_num]
 
+    def _executor_section(self, key: str, default=None):
+        section = getattr(self.config.executor, key, None)
+        return section if section is not None else default
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        title = (title or "").lower()
+        title = re.sub(r"\barxiv:\d{4}\.\d+(v\d+)?\b", " ", title)
+        title = re.sub(r"\b(eprint|iacr)\b", " ", title)
+        title = re.sub(r"[^a-z0-9]+", " ", title)
+        return re.sub(r"\s+", " ", title).strip()
+
+    @staticmethod
+    def _tokens(text: str) -> set[str]:
+        return {
+            token
+            for token in re.findall(r"[a-z0-9]{3,}", (text or "").lower())
+            if token not in {"the", "and", "for", "with", "from", "this", "that", "paper"}
+        }
+
+    @classmethod
+    def _title_similarity(cls, left: Paper, right: Paper) -> float:
+        l_title = cls._normalize_title(left.title)
+        r_title = cls._normalize_title(right.title)
+        if not l_title or not r_title:
+            return 0.0
+
+        seq_score = SequenceMatcher(None, l_title, r_title).ratio()
+        l_tokens = cls._tokens(l_title)
+        r_tokens = cls._tokens(r_title)
+        token_score = 0.0
+        if l_tokens and r_tokens:
+            token_score = len(l_tokens & r_tokens) / len(l_tokens | r_tokens)
+        return max(seq_score, token_score)
+
+    @classmethod
+    def _topic_similarity(cls, left: Paper, right: Paper) -> float:
+        title_score = cls._title_similarity(left, right)
+        left_text = f"{left.title} {left.abstract}"
+        right_text = f"{right.title} {right.abstract}"
+        l_tokens = cls._tokens(left_text)
+        r_tokens = cls._tokens(right_text)
+        abstract_score = 0.0
+        if l_tokens and r_tokens:
+            abstract_score = len(l_tokens & r_tokens) / len(l_tokens | r_tokens)
+        return max(title_score, abstract_score)
+
+    @staticmethod
+    def _append_source_note(paper: Paper, note: str) -> None:
+        if not note:
+            return
+        existing = (paper.source_note or "").strip()
+        if existing and note not in existing:
+            paper.source_note = f"{existing}; {note}"
+        elif not existing:
+            paper.source_note = note
+
+    @staticmethod
+    def _paper_rank_key(paper: Paper, preferred_sources: list[str]) -> tuple:
+        try:
+            source_rank = preferred_sources.index(str(paper.source))
+        except ValueError:
+            source_rank = len(preferred_sources)
+        return (
+            -source_rank,
+            1 if paper.full_text else 0,
+            1 if paper.pdf_url else 0,
+            float(getattr(paper, "author_h_index", None) or 0.0),
+            float(getattr(paper, "citation_count", None) or 0.0),
+        )
+
+    def _deduplicate_papers(self, papers: list[Paper]) -> list[Paper]:
+        dedup_cfg = self._executor_section("dedup", {})
+        if dedup_cfg and not bool(_cfg_get(dedup_cfg, "enabled", True)):
+            return papers
+
+        threshold = float(_cfg_get(dedup_cfg, "title_similarity", 0.94) or 0.94)
+        preferred_sources = list(_cfg_get(dedup_cfg, "preferred_sources", ["eprint", "arxiv", "biorxiv", "medrxiv"]) or [])
+
+        unique: list[Paper] = []
+        duplicate_count = 0
+        for paper in papers:
+            match_index = None
+            for index, existing in enumerate(unique):
+                if self._title_similarity(existing, paper) >= threshold:
+                    match_index = index
+                    break
+
+            if match_index is None:
+                unique.append(paper)
+                continue
+
+            duplicate_count += 1
+            existing = unique[match_index]
+            keep_new = self._paper_rank_key(paper, preferred_sources) > self._paper_rank_key(existing, preferred_sources)
+            kept = paper if keep_new else existing
+            other = existing if keep_new else paper
+            if keep_new:
+                unique[match_index] = kept
+
+            note = f"Also available from {other.source}: {other.url}"
+            self._append_source_note(kept, note)
+            kept.related_papers = list(kept.related_papers or [])
+            kept.related_papers.append(f"{other.source}: {other.title}")
+
+        if duplicate_count:
+            logger.info(f"Deduplicated {duplicate_count} near-identical paper versions.")
+        return unique
+
+    def _assign_topic_clusters(self, papers: list[Paper]) -> None:
+        cluster_cfg = self._executor_section("topic_cluster", {})
+        threshold = float(_cfg_get(cluster_cfg, "topic_similarity", 0.74) or 0.74)
+        clusters: list[list[Paper]] = []
+
+        for paper in papers:
+            target = None
+            for index, cluster in enumerate(clusters):
+                if any(self._topic_similarity(paper, existing) >= threshold for existing in cluster):
+                    target = index
+                    break
+            if target is None:
+                clusters.append([paper])
+            else:
+                clusters[target].append(paper)
+
+        for index, cluster in enumerate(clusters, start=1):
+            for paper in cluster:
+                paper.topic_cluster_id = index
+                paper.topic_cluster_size = len(cluster)
+                if len(cluster) > 1:
+                    self._append_source_note(paper, f"Topic cluster {index}, {len(cluster)} related candidates")
+
+    def _apply_topic_cluster_diversity(self, papers: list[Paper]) -> list[Paper]:
+        cluster_cfg = self._executor_section("topic_cluster", {})
+        if cluster_cfg and not bool(_cfg_get(cluster_cfg, "enabled", True)):
+            return papers
+
+        max_per_cluster = int(_cfg_get(cluster_cfg, "max_per_cluster", 2) or 2)
+        if max_per_cluster <= 0 or len(papers) <= 1:
+            return papers
+
+        self._assign_topic_clusters(papers)
+        selected = []
+        skipped = []
+        cluster_counts: dict[int, int] = {}
+        for paper in papers:
+            cluster_id = paper.topic_cluster_id or id(paper)
+            count = cluster_counts.get(cluster_id, 0)
+            if count < max_per_cluster:
+                selected.append(paper)
+                cluster_counts[cluster_id] = count + 1
+            else:
+                skipped.append(paper)
+
+        if skipped:
+            logger.info(f"Moved {len(skipped)} papers behind stronger same-topic candidates.")
+        return selected + skipped
+
+    def _llm_params_for_review(self):
+        try:
+            params = OmegaConf.to_container(self.config.llm, resolve=True)
+        except Exception:
+            params = dict(self.config.llm)
+        if not isinstance(params, dict):
+            params = {}
+
+        profile = getattr(self.config.executor, "interest_profile", None)
+        if profile:
+            params["review_profile"] = list(profile) if not isinstance(profile, str) else [profile]
+        return params
+
+    def _llm_review_score_weight(self) -> float:
+        return float(getattr(self.config.executor, "llm_review_score_weight", 0.4) or 0.0)
+
+    def _apply_llm_review_score(self, paper: Paper) -> None:
+        if paper.llm_relevance_score is None:
+            return
+
+        weight = self._llm_review_score_weight()
+        if weight <= 0:
+            return
+
+        base_score = float(paper.score or 0.0)
+        paper.score = base_score + (paper.llm_relevance_score - 5.0) * weight
+
     def run(self):
         corpus = self.fetch_zotero_corpus()
         corpus = self.filter_corpus(corpus)
@@ -182,19 +376,24 @@ class Executor:
         if self.quality_enricher.enabled and len(all_papers) > 0:
             logger.info("Enriching papers with OpenAlex citation and author signals...")
             self.quality_enricher.enrich_papers(all_papers)
+        all_papers = self._deduplicate_papers(all_papers)
         reranked_papers = []
         if len(all_papers) > 0:
             logger.info("Reranking papers...")
             reranked_papers = self.reranker.rerank(all_papers, corpus)
+            reranked_papers = self._apply_topic_cluster_diversity(reranked_papers)
             source_minimums = self._source_minimums(self.config)
             if source_minimums:
                 logger.info(f"Applying source minimums: {source_minimums}")
             reranked_papers = self._apply_source_minimums(reranked_papers, source_minimums)
             logger.info("Generating title translation, TLDR and affiliations...")
+            llm_params = self._llm_params_for_review()
             for p in tqdm(reranked_papers):
-                p.generate_title_translation(self.openai_client, self.config.llm)
-                p.generate_tldr(self.openai_client, self.config.llm)
-                p.generate_affiliations(self.openai_client, self.config.llm)
+                p.generate_title_translation(self.openai_client, llm_params)
+                p.generate_tldr(self.openai_client, llm_params)
+                self._apply_llm_review_score(p)
+                p.generate_affiliations(self.openai_client, llm_params)
+            reranked_papers = sorted(reranked_papers, key=lambda paper: paper.score or 0.0, reverse=True)
         elif not self.config.executor.send_empty:
             logger.info("No new papers found. No email will be sent.")
             return

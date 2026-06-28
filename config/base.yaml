@@ -59,6 +59,15 @@ executor:
   source_min_papers: {} # Optional per-source minimum counts, e.g. {arxiv: 10, eprint: 10}
   interest_profile: null # Optional profile texts that steer ranking toward explicit interests. Example: ["applied cryptography with new real-world deployment scenarios", "new cryptographic primitives"]
   interest_profile_weight: 0.0 # Bonus weight for matching interest_profile. Example: 0.8
+  llm_review_score_weight: 0.4 # Bonus/penalty weight from LLM's 0-10 secondary relevance judgment.
+  dedup:
+    enabled: true # Merge near-identical versions across sources before ranking.
+    title_similarity: 0.94 # Title similarity threshold for treating papers as duplicate versions.
+    preferred_sources: ["eprint", "arxiv", "biorxiv", "medrxiv"] # Which source to keep when duplicates are found.
+  topic_cluster:
+    enabled: true # Move excessive same-topic papers behind more diverse candidates.
+    topic_similarity: 0.74 # Similarity threshold for assigning papers to the same topic cluster.
+    max_per_cluster: 2 # How many papers from the same topic cluster can stay ahead before diversification.
 
 feedback:
   enabled: false # Whether to show feedback buttons in the daily email.

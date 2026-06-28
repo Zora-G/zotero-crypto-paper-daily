@@ -37,6 +37,67 @@ class Paper:
     author_h_index: Optional[float] = None
     venue_name: Optional[str] = None
     venue_type: Optional[str] = None
+    llm_relevance_score: Optional[float] = None
+    llm_tags: Optional[list[str]] = None
+    topic_cluster_id: Optional[int] = None
+    topic_cluster_size: Optional[int] = None
+    related_papers: Optional[list[str]] = None
+
+    @staticmethod
+    def _extract_json_object(raw: str) -> dict | None:
+        if not raw:
+            return None
+
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+            text = re.sub(r"```$", "", text).strip()
+
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            pass
+
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            return None
+
+        try:
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _coerce_relevance_score(value) -> Optional[float]:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return None
+        if score < 0:
+            return 0.0
+        if score > 10:
+            return 10.0
+        return score
+
+    @staticmethod
+    def _format_structured_tldr(review: dict, lang: str) -> str:
+        is_chinese = str(lang).strip().lower().startswith(("chinese", "zh", "中文"))
+        labels = {
+            "problem": "问题" if is_chinese else "Problem",
+            "method": "方法" if is_chinese else "Method",
+            "cryptography_relevance": "密码相关性" if is_chinese else "Cryptography relevance",
+            "ai_relevance": "AI相关性" if is_chinese else "AI relevance",
+            "why_worth_reading": "为什么值得看" if is_chinese else "Why worth reading",
+        }
+
+        lines = []
+        for key, label in labels.items():
+            value = str(review.get(key, "") or "").strip()
+            if value:
+                lines.append(f"<strong>{label}：</strong>{value}")
+        return "<br>".join(lines)
 
     def _generate_tldr_with_llm(self, openai_client:OpenAI,llm_params:dict) -> str:
         lang = llm_params.get('language', 'English')
@@ -57,12 +118,30 @@ class Paper:
         else:
             sentence_hint = f"generate a {max_sentences}-sentence"
 
+        review_profile = llm_params.get("review_profile") or []
+        if isinstance(review_profile, str):
+            review_profile = [review_profile]
+        review_profile = [str(item).strip() for item in review_profile if str(item).strip()]
+
         prompt = (
-            f"Given the following information of a paper, {sentence_hint} TLDR summary in {lang}.\n"
+            f"Given the following information of a paper, generate a structured paper judgment in {lang}.\n"
             f"{length_hint}\n"
-            "The summary should capture the core contribution and the main technical idea, "
-            "and avoid fluff.\n\n"
+            "Return only one valid JSON object with these keys:\n"
+            "- problem: the concrete research problem or new application scenario.\n"
+            "- method: the main technique, construction, primitive, protocol, attack, or system idea.\n"
+            "- cryptography_relevance: how directly it relates to cryptography, applied cryptography, privacy, authentication, ZK, MPC, FHE, PSI, credentials, signatures, encryption, blockchain cryptography, or security proofs.\n"
+            "- ai_relevance: whether and how it relates to AI/ML systems, privacy-preserving AI, model security, data governance, or AI agents; say low/none if it does not.\n"
+            "- why_worth_reading: why this paper is worth reading for a researcher interested in applied cryptography, new cryptographic primitives, and privacy-preserving systems.\n"
+            "- relevance_score: a number from 0 to 10 for this user's interests.\n"
+            "- tags: an array of 3 to 6 concise technical tags.\n"
+            f"For each natural-language field, {sentence_hint} explanation is enough.\n"
+            "Be specific, technical, and avoid generic praise.\n\n"
         )
+        if review_profile:
+            prompt += "User interest profile:\n"
+            for item in review_profile:
+                prompt += f"- {item}\n"
+            prompt += "\n"
         if self.title:
             prompt += f"Title:\n {self.title}\n\n"
 
@@ -88,8 +167,17 @@ class Paper:
             ],
             **llm_params.get('generation_kwargs', {})
         )
-        tldr = response.choices[0].message.content
-        return tldr
+        content = response.choices[0].message.content or ""
+        review = self._extract_json_object(content)
+        if not review:
+            return content
+
+        self.llm_relevance_score = self._coerce_relevance_score(review.get("relevance_score"))
+        tags = review.get("tags")
+        if isinstance(tags, list):
+            self.llm_tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+        tldr = self._format_structured_tldr(review, lang)
+        return tldr or content
     
     def generate_tldr(self, openai_client:OpenAI,llm_params:dict) -> str:
         try:

@@ -348,3 +348,69 @@ def test_apply_source_minimums_respects_max(config):
     assert result[0].title == "A"
     assert result[1].title == "B"
     assert result[2].title == "C"
+
+
+def test_deduplicate_papers_prefers_configured_source(config):
+    executor = Executor.__new__(Executor)
+    executor.config = config
+
+    arxiv = make_sample_paper(
+        source="arxiv",
+        title="Privacy-Preserving Password Authentication for Wallets",
+        url="https://arxiv.org/abs/2601.00001",
+    )
+    eprint = make_sample_paper(
+        source="eprint",
+        title="Privacy Preserving Password Authentication for Wallets",
+        url="https://eprint.iacr.org/2026/1",
+    )
+
+    with open_dict(config.executor):
+        config.executor.dedup = {
+            "enabled": True,
+            "title_similarity": 0.90,
+            "preferred_sources": ["eprint", "arxiv"],
+        }
+
+    unique = executor._deduplicate_papers([arxiv, eprint])
+    assert len(unique) == 1
+    assert unique[0].source == "eprint"
+    assert "Also available from arxiv" in unique[0].source_note
+
+
+def test_topic_cluster_diversity_moves_redundant_topics_back(config):
+    executor = Executor.__new__(Executor)
+    executor.config = config
+
+    papers = [
+        make_sample_paper(title="Password Authenticated Key Exchange for Wallets", abstract="wallet pake authentication", score=9.0),
+        make_sample_paper(title="Password Authenticated Key Exchange for Mobile Wallets", abstract="wallet pake authentication", score=8.9),
+        make_sample_paper(title="Lattice Signatures with Compact Verification", abstract="post quantum signatures", score=8.8),
+    ]
+
+    with open_dict(config.executor):
+        config.executor.topic_cluster = {
+            "enabled": True,
+            "topic_similarity": 0.55,
+            "max_per_cluster": 1,
+        }
+
+    diversified = executor._apply_topic_cluster_diversity(papers)
+    assert [paper.title for paper in diversified] == [
+        "Password Authenticated Key Exchange for Wallets",
+        "Lattice Signatures with Compact Verification",
+        "Password Authenticated Key Exchange for Mobile Wallets",
+    ]
+
+
+def test_apply_llm_review_score_updates_score(config):
+    executor = Executor.__new__(Executor)
+    executor.config = config
+
+    with open_dict(config.executor):
+        config.executor.llm_review_score_weight = 0.5
+
+    paper = make_sample_paper(score=6.0, llm_relevance_score=9.0)
+    executor._apply_llm_review_score(paper)
+
+    assert paper.score == 8.0
